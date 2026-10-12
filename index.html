@@ -124,6 +124,32 @@
     border:1px solid var(--line); border-radius:6px; padding:6px 9px; font-size:12px;
     display:none; z-index:100; box-shadow:0 6px 18px rgba(0,0,0,.35); white-space:nowrap;
   }
+  /* The explainer variant wraps and holds a few lines, unlike the bar readout. */
+  .tip.explain{white-space:normal; max-width:310px; line-height:1.5; padding:9px 11px}
+  .tip.explain .t{font-weight:700; display:block; margin-bottom:3px}
+  .tip.explain .g{color:var(--muted); display:block; margin-top:5px; font-size:11.5px}
+  .tip.explain .g b{color:var(--text); font-weight:600}
+
+  /* Anything with an explainer attached gets a dotted underline as the affordance. */
+  .has-info{cursor:help; border-bottom:1px dotted rgba(255,255,255,.28)}
+
+  #pricewrap{margin-bottom:4px}
+  .pricecard{
+    background:linear-gradient(180deg,var(--panel),#07090d);
+    border:1px solid var(--line); border-radius:var(--radius); padding:13px 14px 8px;
+    position:relative; overflow:hidden;
+  }
+  .pricecard .top{display:flex; justify-content:space-between; align-items:baseline; gap:10px; flex-wrap:wrap}
+  .pricecard h3{margin:0; font-size:13px; font-weight:600}
+  .pricecard .chg{font-size:12.5px; color:var(--muted)}
+  .pricecard .chg b{font-weight:700}
+  .pricecard .segs{display:flex; gap:7px; flex-wrap:wrap}
+  .rangeseg{display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden}
+  .rangeseg button{border:0; border-radius:0; background:var(--panel); padding:4px 10px; font-size:11.5px}
+  .rangeseg button.on{background:var(--accent); color:#fff}
+
+  /* Table direction colouring: literal period-over-period movement. */
+  td.up{color:var(--pos)} td.down{color:var(--neg)}
 
   /* ---------------------------------------------------------------- phones */
   @media (max-width: 720px){
@@ -148,7 +174,10 @@
     .card{padding:12px 12px 4px}
     .chips{gap:5px}
     .chip{padding:5px 11px}            /* a little taller, for thumbs */
-    .tip{display:none !important}      /* no hover on touch; the bar labels carry it */
+    /* No hover on touch, so the bar readout is dead weight — but the explainers
+       are tap-driven and must still show. */
+    .tip:not(.explain){display:none !important}
+    .tip.explain{max-width:min(310px, calc(100vw - 24px))}
   }
   @media (max-width: 330px){
     #valuation .tile{flex:1 1 100%}
@@ -189,12 +218,16 @@
     <div class="price" id="price"></div>
     <div id="valuation"></div>
   </div>
+  <div id="pricewrap"></div>
   <div id="grid"></div>
 
-  <details id="tabledetails" style="display:none">
-    <summary>Show data table</summary>
+  <div id="tablesection" style="display:none">
+    <div class="section">
+      <span class="dot" style="background:#94a3b8"></span>
+      <h2>All Figures</h2><span class="rule"></span>
+    </div>
     <div class="tablewrap"><table id="table"></table></div>
-  </details>
+  </div>
 
   <details>
     <summary>Data sources &amp; connection settings — open this if nothing loads</summary>
@@ -317,6 +350,82 @@ const EDGAR_TAGS = {
   // in loadEdgar from the lines above.
 };
 
+/* ==================================================== metric explainers */
+/*
+ * Plain-language definitions plus the conventional reference ranges people
+ * quote. These are rules of thumb, not verdicts: what counts as expensive is
+ * wildly industry-dependent, so `gauge` describes where a number sits in
+ * convention rather than telling anyone what to do about it.
+ */
+const EXPLAIN = {
+  // ---- valuation tiles
+  'Market cap': {t:'Market capitalisation',
+    d:'What the whole company costs at today’s price: share price times diluted share count.',
+    g:'Conventional size bands: <b>under $2B</b> small-cap, <b>$2–10B</b> mid, <b>$10–200B</b> large, <b>above $200B</b> mega-cap.'},
+  'Enterprise value': {t:'Enterprise value',
+    d:'What it would cost to buy the business outright — market cap plus debt, minus cash, since you inherit the debt and keep the cash.',
+    g:'Above market cap means net debt; below it means the company holds more cash than debt.'},
+  'P/E': {t:'Price / Earnings (trailing)',
+    d:'Price paid for each dollar the company actually earned over the last twelve months.',
+    g:'Broad-market average sits around <b>15–20×</b>. Under ~15× is conventionally called cheap, <b>over ~30×</b> prices in strong growth. Negative earnings make it meaningless — shown as n/m.'},
+  'PEG': {t:'Price / Earnings to Growth',
+    d:'The forward P/E divided by the expected growth rate, so a fast grower and a slow one can be compared on the same scale.',
+    g:'The classic yardstick is <b>1.0 = fairly valued</b>; <b>below 1</b> cheap for the growth on offer, <b>above 2</b> expensive. Fragile when growth is measured off a depressed base.'},
+  'P/S': {t:'Price / Sales',
+    d:'Price per dollar of revenue. Useful when a company has no earnings to divide by.',
+    g:'Roughly <b>1–2×</b> is ordinary for mature businesses; <b>under 1×</b> is cheap, and software routinely trades <b>above 10×</b>. Only comparable within an industry.'},
+  'EV/EBITDA': {t:'Enterprise value / EBITDA',
+    d:'Company value against rough operating cash earnings. Ignores capital structure, so it compares across companies with different debt loads.',
+    g:'<b>8–12×</b> is the usual middle ground; <b>under 8×</b> cheap, <b>over 15×</b> rich.'},
+  'Net debt': {t:'Net debt',
+    d:'Debt minus cash and short-term investments — borrowings left over after the cash pile is applied.',
+    g:'Usually judged against EBITDA: <b>under 3×</b> is generally considered comfortable, above that leveraged.'},
+  'Net cash': {t:'Net cash',
+    d:'Cash and short-term investments exceed all borrowings — the company could clear its debt tomorrow and still have money left.',
+    g:'A balance-sheet strength, giving room to invest or buy back shares through a downturn.'},
+  'FWD': {t:'Forward P/E',
+    d:'Today’s price against what analysts expect the company to earn in that fiscal year.',
+    g:'Lower than the trailing P/E means earnings are expected to grow. These are <b>forecasts, not filings</b> — they get revised and skew optimistic.'},
+
+  // ---- chart metrics
+  TotalRevenue: {t:'Revenue', d:'The top line: everything sold before any cost is taken out.',
+    g:'Growth matters more than level. Watch it against the same quarter a year earlier, since most businesses are seasonal.'},
+  GrossProfit: {t:'Gross profit', d:'Revenue minus the direct cost of producing what was sold.',
+    g:'As a share of revenue: <b>under 20%</b> is typical of retail and hardware, <b>above 60%</b> of software and pharma. Rising is good; falling means pricing or input pressure.'},
+  OperatingIncome: {t:'Operating income', d:'Profit from running the business, before interest and tax.',
+    g:'<b>10–15%</b> of revenue is a solid operating margin for most industries; above 25% is unusually profitable.'},
+  EBITDA: {t:'EBITDA', d:'Operating income with depreciation and amortisation added back — a rough proxy for operating cash generation.',
+    g:'Not a GAAP figure and reconstructed here, so it will not match a company’s own “adjusted” number. It flatters capital-heavy businesses by ignoring the cost of worn-out assets.'},
+  NetIncome: {t:'Net income', d:'The bottom line: what is left after every cost, interest and tax.',
+    g:'Lumpier than revenue because one-off charges and tax items land here. A single bad quarter often is not a trend.'},
+  DilutedEPS: {t:'Diluted earnings per share', d:'Net income split across every share that would exist if all options and convertibles converted.',
+    g:'This is the figure P/E uses. It can rise on buybacks alone, without the business earning any more.'},
+  DilutedShares: {t:'Diluted share count', d:'How many shares the profit is divided between.',
+    g:'<b>Falling</b> means buybacks are outpacing new issuance, lifting EPS. <b>Rising</b> dilutes existing holders — common where staff are paid in stock.'},
+  OperatingCashFlow: {t:'Operating cash flow', d:'Cash actually generated by operations, as opposed to accounting profit.',
+    g:'Should broadly track net income over time. Persistently far below it is a classic warning sign about earnings quality.'},
+  CapitalExpenditure: {t:'Capital expenditure', d:'Cash spent on property, plant, equipment and other long-lived assets. Shown positive here, though it is money going out.',
+    g:'Heavy and rising capex means building for the future — at the cost of today’s free cash flow. Compare it against operating cash flow.'},
+  FreeCashFlow: {t:'Free cash flow', d:'Operating cash flow minus capital expenditure — cash genuinely left over to pay down debt, buy back shares or pay dividends.',
+    g:'Arguably the number that matters most. <b>Above 10%</b> of revenue is a strong FCF margin.'},
+  RepurchaseOfCapitalStock: {t:'Share buybacks', d:'Cash spent repurchasing the company’s own shares. Shown positive, though it is an outflow.',
+    g:'Only creates value when shares are bought below what they are worth. Check it against the share count — buybacks that merely offset staff stock grants do not shrink it.'},
+  CashDividendsPaid: {t:'Dividends paid', d:'Cash paid directly to shareholders. Shown positive, though it is an outflow.',
+    g:'Judge sustainability against free cash flow. Dividends consistently exceeding FCF are being funded by debt or the cash pile.'},
+  ResearchAndDevelopment: {t:'R&D expense', d:'Spending on developing new products and technology.',
+    g:'<b>Under 5%</b> of revenue in traditional industries, <b>15–25%</b> in software and semiconductors. Cutting it can flatter profit now at the cost of later.'},
+  SellingGeneralAndAdministration: {t:'SG&A', d:'Selling, general and administrative overhead — sales, marketing, admin and head office.',
+    g:'Should grow more slowly than revenue as a company scales. Rising faster signals bloat or an expensive push for growth.'},
+  TotalAssets: {t:'Total assets', d:'Everything the company owns, at balance-sheet values.',
+    g:'Size alone says little. It matters as the denominator of return on assets, and jumps usually mean an acquisition.'},
+  CashAndCashEquivalents: {t:'Cash & equivalents', d:'Cash and instruments convertible to cash almost immediately.',
+    g:'The buffer for surviving a downturn without borrowing. Short-term investments sit alongside this and count as cash for enterprise value.'},
+  TotalDebt: {t:'Total debt', d:'Interest-bearing borrowings.',
+    g:'Judge against EBITDA and cash, never alone: <b>under 3×</b> EBITDA is generally considered comfortable. Captive finance arms (carmakers, banks) carry debt that is not distress.'},
+  StockholdersEquity: {t:'Stockholders’ equity', d:'Assets minus liabilities — the book value belonging to shareholders.',
+    g:'Can go negative from sustained buybacks or losses without meaning insolvency. Heavily distorted by intangibles and historic cost.'},
+};
+
 /* ====================================================== network plumbing */
 
 const PROXIES = [
@@ -389,12 +498,14 @@ const els = {
   q:$('q'), suggest:$('suggest'), go:$('go'), csv:$('csv'), status:$('status'),
   grid:$('grid'), head:$('head'), name:$('name'), sub:$('sub'), price:$('price'),
   recent:$('recent'), periods:$('periods'), freq:$('freq'),
-  table:$('table'), tabledetails:$('tabledetails'), tip:$('tip'),
-  valuation:$('valuation'), customproxy:$('customproxy'), activeproxy:$('activeproxy'),
+  table:$('table'), tablesection:$('tablesection'), tip:$('tip'),
+  valuation:$('valuation'), pricewrap:$('pricewrap'),
+  customproxy:$('customproxy'), activeproxy:$('activeproxy'),
 };
 
 const state = {
   freq:'quarterly', symbol:null, meta:null, bundle:null, estimates:null,
+  priceOpts:{range:'5Y', interval:'W', type:'candle'},
   series:{},                                     // key -> [{date, value, derived?}]
   cache:new Map(),                               // ticker -> {quarterly, annual, cik, entity}
   reqId:0,
@@ -426,6 +537,7 @@ els.q.addEventListener('keydown', e => {
 
 document.addEventListener('click', e => {
   if (!els.suggest.contains(e.target) && e.target !== els.q) hideSuggest();
+  if (els.tip.classList.contains('explain')) hideTip();   // tap anywhere dismisses
 });
 
 function hideSuggest(){ els.suggest.style.display = 'none'; suggestIdx = -1; }
@@ -671,8 +783,9 @@ async function load(symbol){
   const req = ++state.reqId;
   state.symbol = symbol;
   els.grid.innerHTML = '';
-  els.tabledetails.style.display = 'none';
+  els.tablesection.style.display = 'none';
   els.valuation.innerHTML = '';
+  els.pricewrap.innerHTML = '';
   state.estimates = null;
   setStatus('Loading ' + symbol + ' from SEC EDGAR…');
 
@@ -748,6 +861,9 @@ async function loadQuote(symbol, entity){
   if (state.symbol !== symbol) return;          // a newer lookup overtook this one
   renderValuation(meta && meta.regularMarketPrice);
   if (Object.keys(state.series).length) render();
+  // Not awaited: the fundamentals must not wait on price history. Whatever
+  // range/interval/type the user last chose is kept across lookups.
+  renderPrice(symbol, state.priceOpts);
 
   // Forward multiples need analyst estimates, which EDGAR has no notion of.
   // Fetched separately so a failure here leaves the rest of the panel intact.
@@ -771,6 +887,251 @@ async function loadEstimates(symbol){
     year: t.endDate ? String(t.endDate).slice(0,4) : null,
   };
   return {y0: grab(pick('0y')), y1: grab(pick('+1y'))};
+}
+
+/* ========================================================== price chart */
+
+// Yahoo's own `range=max` is unreliable — it answers with a sparse ~169 points
+// whatever interval you ask for — so every window is requested as an explicit
+// period1/period2 pair instead, which returns the real history.
+const PRICE_RANGES = [
+  {k:'1Y',  years:1},
+  {k:'5Y',  years:5},
+  {k:'Max', years:0},        // 0 means from the beginning of the listing
+];
+const PRICE_INTERVALS = [
+  {k:'D', api:'1d',  label:'Daily'},
+  {k:'W', api:'1wk', label:'Weekly'},
+  {k:'M', api:'1mo', label:'Monthly'},
+];
+
+const fmtPx = v => v >= 1000 ? v.toFixed(0) : v.toFixed(2);
+
+/** Candles narrower than a couple of pixels are mush; this is the readable ceiling. */
+const MAX_CANDLES = 320;
+
+async function loadPrice(symbol, opts){
+  const r = PRICE_RANGES.find(x => x.k === opts.range) || PRICE_RANGES[1];
+  const iv = PRICE_INTERVALS.find(x => x.k === opts.interval) || PRICE_INTERVALS[1];
+  const now = Math.floor(Date.now() / 1000);
+  const p1 = r.years ? now - Math.round(r.years * 31557600) : 0;
+
+  const d = await fetchSoft('https://query1.finance.yahoo.com/v8/finance/chart/' +
+    encodeURIComponent(symbol) + '?period1=' + p1 + '&period2=' + now +
+    '&interval=' + iv.api, 25000);
+  const res = d && d.chart && d.chart.result && d.chart.result[0];
+  if (!res || !res.timestamp) return null;
+  const q = res.indicators && res.indicators.quote && res.indicators.quote[0];
+  if (!q || !q.close) return null;
+
+  const pts = [];
+  for (let i = 0; i < res.timestamp.length; i++){
+    const c = q.close[i];
+    if (c == null) continue;                   // gaps happen on holidays and halts
+    pts.push({
+      t: res.timestamp[i] * 1000,
+      v: c,
+      o: q.open && q.open[i] != null ? q.open[i] : c,
+      h: q.high && q.high[i] != null ? q.high[i] : c,
+      l: q.low  && q.low[i]  != null ? q.low[i]  : c,
+    });
+  }
+  return pts.length > 1 ? pts : null;
+}
+
+/**
+ * Collapses candles into coarser ones when there are too many to see. Proper OHLC
+ * aggregation: open of the first, close of the last, the extreme high and low.
+ */
+function aggregate(pts, target){
+  if (pts.length <= target) return {pts, bucketed:0};
+  const size = Math.ceil(pts.length / target);
+  const out = [];
+  for (let i = 0; i < pts.length; i += size){
+    const chunk = pts.slice(i, i + size);
+    out.push({
+      t: chunk[0].t,
+      o: chunk[0].o,
+      v: chunk[chunk.length-1].v,
+      h: Math.max(...chunk.map(p => p.h)),
+      l: Math.min(...chunk.map(p => p.l)),
+    });
+  }
+  return {pts: out, bucketed: size};
+}
+
+function seg(cls, items, active, attr){
+  return '<span class="' + cls + '">' + items.map(i =>
+    '<button data-' + attr + '="' + i.k + '"' + (i.k === active ? ' class="on"' : '') +
+    (i.label ? ' title="' + i.label + '"' : '') + '>' + i.k + '</button>').join('') + '</span>';
+}
+
+async function renderPrice(symbol, opts){
+  state.priceOpts = opts = Object.assign({range:'5Y', interval:'W', type:'candle'}, opts);
+  const pts = await loadPrice(symbol, opts);
+  if (state.symbol !== symbol) return;         // a newer lookup overtook this one
+  els.pricewrap.innerHTML = '';
+  if (!pts) return;                            // price history is a bonus, never a blocker
+
+  const candles = opts.type === 'candle';
+  const agg = candles ? aggregate(pts, MAX_CANDLES) : {pts, bucketed:0};
+  const first = pts[0].v, last = pts[pts.length-1].v;
+  const chg = (last - first) / first * 100;
+  const up = chg >= 0;
+
+  const card = document.createElement('div');
+  card.className = 'pricecard';
+  card.innerHTML =
+    '<div class="top">' +
+      '<h3>Share price</h3>' +
+      '<span class="chg">' + esc(opts.range) + ' <b class="' + (up ? 'up' : 'down') + '">' +
+        (up ? '+' : '') + chg.toFixed(1) + '%</b>' +
+        '<span style="color:var(--muted)"> · ' + fmtPx(first) + ' → ' + fmtPx(last) +
+        ' · ' + pts.length.toLocaleString() + ' bars' +
+        (agg.bucketed > 1 ? ' · grouped ' + agg.bucketed + '× to stay readable' : '') +
+        '</span>' +
+      '</span>' +
+      '<span class="segs">' +
+        seg('rangeseg', PRICE_RANGES, opts.range, 'r') +
+        seg('rangeseg', PRICE_INTERVALS, opts.interval, 'i') +
+        seg('rangeseg', [{k:'Candles'},{k:'Line'}], candles ? 'Candles' : 'Line', 'c') +
+      '</span>' +
+    '</div>';
+
+  card.querySelector('.segs').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const next = Object.assign({}, opts);
+    if (b.dataset.r) next.range = b.dataset.r;
+    if (b.dataset.i) next.interval = b.dataset.i;
+    if (b.dataset.c) next.type = b.dataset.c === 'Candles' ? 'candle' : 'line';
+    renderPrice(symbol, next);
+  });
+
+  card.appendChild(priceChart(agg.pts, up, candles));
+  els.pricewrap.appendChild(card);
+}
+
+function priceChart(pts, up, candles){
+  const ns = 'http://www.w3.org/2000/svg';
+  const W = 1000, H = 190, padL = 6, padR = 46, padT = 14, padB = 22;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  // Candles are scaled to their wicks; a line only ever needs the closes.
+  const vals = candles ? pts.flatMap(p => [p.h, p.l]) : pts.map(p => p.v);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi === lo) hi = lo + 1;
+  // Pad the scale for breathing room, but never below zero — a share price
+  // cannot be negative, and over a long history the pad would push it there.
+  const pad = (hi - lo) * 0.08;
+  hi += pad;
+  lo = Math.max(0, lo - pad);
+  // Bars are placed by position, not by date. Spacing by real time leaves a blank
+  // every weekend and holiday, because no price exists while the market is shut;
+  // each trading bar gets an equal slot instead, the way trading charts do.
+  const slot = innerW / pts.length;
+  const x = i => padL + slot * i + slot / 2;
+  const y = v => padT + innerH * (hi - v) / (hi - lo);
+
+  const mk = (tag, a) => { const e = document.createElementNS(ns, tag); for (const k in a) e.setAttribute(k, a[k]); return e; };
+  const svg = document.createElementNS(ns,'svg');
+  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+  svg.setAttribute('preserveAspectRatio','none');
+  svg.style.height = '190px';
+  svg.setAttribute('role','img');
+  svg.setAttribute('aria-label','Share price history');
+
+  const cs = getComputedStyle(document.documentElement);
+  const mutedC = cs.getPropertyValue('--muted').trim();
+  const col = (up ? cs.getPropertyValue('--pos') : cs.getPropertyValue('--neg')).trim();
+
+  const uid = 'p' + Math.random().toString(36).slice(2,9);
+  const defs = mk('defs',{});
+  const lg = mk('linearGradient',{id:uid, x1:'0', y1:'0', x2:'0', y2:'1'});
+  lg.appendChild(mk('stop',{offset:'0%','stop-color':col,'stop-opacity':0.34}));
+  lg.appendChild(mk('stop',{offset:'100%','stop-color':col,'stop-opacity':0}));
+  defs.appendChild(lg); svg.appendChild(defs);
+
+  // Axis labels sit in the right-hand gutter, clear of the line.
+  for (const gv of [hi, (hi+lo)/2, lo]){
+    svg.appendChild(mk('line',{x1:padL, x2:W-padR, y1:y(gv), y2:y(gv),
+      stroke:'#ffffff','stroke-opacity':0.07,'stroke-width':1}));
+    const t = mk('text',{x:W-padR+6, y:y(gv)+3.5, fill:mutedC, 'font-size':11});
+    t.textContent = fmtPx(gv);
+    svg.appendChild(t);
+  }
+
+  if (candles){
+    const posC = cs.getPropertyValue('--pos').trim();
+    const negC = cs.getPropertyValue('--neg').trim();
+    const bw = Math.max(0.8, slot * 0.68);
+    pts.forEach((p, i) => {
+      const cx = x(i);
+      const rising = p.v >= p.o;
+      const c = rising ? posC : negC;
+      // Wick first, so the body sits over it.
+      svg.appendChild(mk('line',{x1:cx, x2:cx, y1:y(p.h), y2:y(p.l),
+        stroke:c, 'stroke-width':1, 'vector-effect':'non-scaling-stroke', 'stroke-opacity':0.85}));
+      const top = y(Math.max(p.o, p.v));
+      // A doji closes where it opened; without a floor it would vanish entirely.
+      const bh = Math.max(0.8, Math.abs(y(p.o) - y(p.v)));
+      svg.appendChild(mk('rect',{x:cx - bw/2, y:top, width:bw, height:bh, fill:c, 'fill-opacity':rising ? 0.9 : 0.85}));
+    });
+  } else {
+    let d = '';
+    pts.forEach((p,i) => { d += (i ? 'L' : 'M') + x(i).toFixed(2) + ' ' + y(p.v).toFixed(2); });
+    svg.appendChild(mk('path',{
+      d: d + 'L' + x(pts.length-1).toFixed(2) + ' ' + (padT+innerH) +
+         'L' + x(0).toFixed(2) + ' ' + (padT+innerH) + 'Z',
+      fill:'url(#' + uid + ')'}));
+    // The viewBox is stretched horizontally, so the stroke must not scale with it.
+    svg.appendChild(mk('path',{d, fill:'none', stroke:col, 'stroke-width':1.6,
+      'stroke-linejoin':'round','stroke-linecap':'round','vector-effect':'non-scaling-stroke'}));
+  }
+
+  // Ticks mark the first bar of a period rather than a calendar position, now
+  // that the axis is ordinal. Year ticks are useless over a single year — one
+  // lonely "2026" — so short windows are labelled by month.
+  const spanYears = (pts[pts.length-1].t - pts[0].t) / 31557600000;
+  const byMonth = spanYears <= 2.2;
+  const ticks = [];
+  let lastKey = null;
+  pts.forEach((p, i) => {
+    const dt = new Date(p.t);
+    const key = byMonth ? dt.getFullYear() + '-' + dt.getMonth() : String(dt.getFullYear());
+    if (key === lastKey) return;
+    lastKey = key;
+    ticks.push({i, label: byMonth
+      ? MONTHS[dt.getMonth()] + (dt.getMonth() === 0 ? " '" + String(dt.getFullYear()).slice(2) : '')
+      : String(dt.getFullYear())});
+  });
+  const every = Math.ceil(ticks.length / 8);
+  ticks.forEach((tk, n) => {
+    if (n % every) return;
+    const tx = x(tk.i);
+    if (tx < padL || tx > W - padR) return;
+    const t = mk('text',{x:tx, y:H-6, fill:mutedC, 'font-size':11, 'text-anchor':'middle'});
+    t.textContent = tk.label;
+    svg.appendChild(t);
+  });
+
+  const hair = mk('line',{y1:padT, y2:padT+innerH, stroke:col, 'stroke-opacity':0.5,
+                          'stroke-width':1, 'vector-effect':'non-scaling-stroke', visibility:'hidden'});
+  svg.appendChild(hair);
+  const hit = mk('rect',{x:padL, y:padT, width:innerW, height:innerH, fill:'transparent'});
+  hit.style.cursor = 'crosshair';
+  hit.addEventListener('mousemove', ev => {
+    const r = svg.getBoundingClientRect();
+    // Ordinal axis, so the bar under the cursor is a direct index — no search.
+    const frac = (ev.clientX - r.left) / r.width;
+    const i = Math.max(0, Math.min(pts.length - 1, Math.floor(frac * pts.length)));
+    const best = pts[i];
+    hair.setAttribute('x1', x(i)); hair.setAttribute('x2', x(i));
+    hair.setAttribute('visibility','visible');
+    showTip(ev, new Date(best.t).toISOString().slice(0,10) + ' · ' + fmtPx(best.v));
+  });
+  hit.addEventListener('mouseleave', () => { hair.setAttribute('visibility','hidden'); hideTip(); });
+  svg.appendChild(hit);
+  return svg;
 }
 
 /**
@@ -843,6 +1204,8 @@ function renderValuation(price){
     d.innerHTML = '<div class="k">' + esc(t.k) + '</div>' +
                   '<div class="v">' + esc(t.v == null ? 'n/m' : t.v) + '</div>' +
                   '<div class="s">' + esc(t.s) + '</div>';
+    // Forward P/E tiles are named per fiscal year, so they share one explainer.
+    attachInfo(d, /^P\/E FY/.test(t.k) ? 'FWD' : t.k);
     box.appendChild(d);
   }
 }
@@ -930,6 +1293,7 @@ function render(){
           '<span>YoY ' + pctSpan(prevYear ? pct(last.value, prevYear.value) : null) + '</span>' +
           (anyDerived ? '<span title="Recovered by differencing year-to-date filings" style="opacity:.6">derived</span>' : '') +
         '</div>';
+      attachInfo(card.querySelector('h3'), m.key);
       card.appendChild(barChart(data, m));
       row.appendChild(card);
     }
@@ -1051,12 +1415,52 @@ function barChart(data, m){
 }
 
 function showTip(e, text){
+  els.tip.className = 'tip';
   els.tip.textContent = text;
   els.tip.style.display = 'block';
-  els.tip.style.left = Math.min(e.clientX + 12, innerWidth - els.tip.offsetWidth - 8) + 'px';
-  els.tip.style.top = (e.clientY - 34) + 'px';
+  place(e.clientX + 12, e.clientY - 34);
 }
 function hideTip(){ els.tip.style.display = 'none'; }
+
+function place(x, y){
+  const t = els.tip;
+  t.style.left = Math.max(8, Math.min(x, innerWidth - t.offsetWidth - 8)) + 'px';
+  t.style.top  = Math.max(8, Math.min(y, innerHeight - t.offsetHeight - 8)) + 'px';
+}
+
+/**
+ * Attaches an explainer to an element. Hover on a mouse; tap on a touch screen,
+ * where there is no hover at all and the tip would otherwise be unreachable.
+ */
+let tapTipTimer = null;
+function attachInfo(el, key){
+  const info = EXPLAIN[key];
+  if (!info) return;
+  el.classList.add('has-info');
+  el.setAttribute('title', info.t + ' — ' + info.d);   // long-press / accessibility fallback
+
+  const html = '<span class="t">' + esc(info.t) + '</span>' + esc(info.d) +
+               (info.g ? '<span class="g">' + info.g + '</span>' : '');
+  const show = (x, y) => {
+    els.tip.className = 'tip explain';
+    els.tip.innerHTML = html;
+    els.tip.style.display = 'block';
+    els.tip.style.left = '-9999px';                     // measure before positioning
+    place(x + 14, y + 14);
+  };
+
+  el.addEventListener('mouseenter', e => show(e.clientX, e.clientY));
+  el.addEventListener('mousemove', e => { if (els.tip.style.display === 'block') place(e.clientX + 14, e.clientY + 14); });
+  el.addEventListener('mouseleave', hideTip);
+  el.addEventListener('click', e => {
+    // Touch: show it anchored to the element and clear itself after a read.
+    const r = el.getBoundingClientRect();
+    show(r.left, r.bottom - 10);
+    clearTimeout(tapTipTimer);
+    tapTipTimer = setTimeout(hideTip, 6000);
+    e.stopPropagation();
+  });
+}
 
 function shownMetrics(){
   return METRICS.filter(m => state.series[m.key] && state.series[m.key].length);
@@ -1064,7 +1468,7 @@ function shownMetrics(){
 
 function renderTable(){
   const shown = shownMetrics();
-  if (!shown.length){ els.tabledetails.style.display = 'none'; return; }
+  if (!shown.length){ els.tablesection.style.display = 'none'; return; }
   const dates = [...new Set(shown.flatMap(m => visiblePoints(state.series[m.key]).map(p => p.date)))].sort().reverse();
   let html = '<thead><tr><th>Metric</th>' + dates.map(d =>
     '<th>' + periodLabel(d) + '<br><span style="font-weight:400;opacity:.6">' + d + '</span></th>').join('') +
@@ -1072,10 +1476,19 @@ function renderTable(){
   for (const m of shown){
     const map = new Map(state.series[m.key].map(p => [p.date, p.value]));
     html += '<tr><td>' + esc(m.label) + '</td>' +
-      dates.map(d => '<td>' + (map.has(d) ? fmtVal(map.get(d), m) : '—') + '</td>').join('') + '</tr>';
+      dates.map((d, i) => {
+        if (!map.has(d)) return '<td>—</td>';
+        const v = map.get(d);
+        // Columns run newest-first, so the previous period is the one to the right.
+        const prev = map.get(dates[i + 1]);
+        // Literal direction only: green is a bigger number than last period, not
+        // a judgement. On debt or capex a rise is green too — read it as movement.
+        const cls = prev == null || v === prev ? '' : (v > prev ? ' class="up"' : ' class="down"');
+        return '<td' + cls + '>' + fmtVal(v, m) + '</td>';
+      }).join('') + '</tr>';
   }
   els.table.innerHTML = html + '</tbody>';
-  els.tabledetails.style.display = 'block';
+  els.tablesection.style.display = 'block';
 }
 
 /* ================================================================ export */
